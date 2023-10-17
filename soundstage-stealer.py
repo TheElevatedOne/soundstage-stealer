@@ -1,35 +1,96 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.interpolate import make_interp_spline
+import argparse as ap
+import os
 
-dt_freq = np.array([10, 20, 25, 30, 40, 50, 60, 73, 80, 90, 112, 139, 236, 300, 400, 600, 800, 1300, 1500, 2000, 3000, 3500, 4000, 6000, 8000, 10000, 12500, 16400, 18600, 22050])
-dt_db = np.array([6, 9, 9.5, 10.5, 11, 10.8, 9, 5, 6.2, 10, 8.6, 11, 2.5, 4, 4.5, 4, 3, 3.3, 3, 5.7, 1.5, 1.8, 1, 11.2, 6.3, 10, 11.5, 1.4, 1, 1.6])
 
-dt_spline = make_interp_spline(dt_freq, dt_db)
+class Stealer:
+    def __init__(self):
+        self.eq = [20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000,
+                   2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000]
 
-dt_freq_ = np.linspace(1, 22050, 22050)
-dt_db_ = dt_spline(dt_freq_)
+        params = self.parse()
+        steal = self.read_eq(params.steal, params.peace)
+        apply = self.read_eq(params.apply, params.peace)
 
-dt_matrix = np.array([dt_freq_, dt_db_])
+        self.create_eq(steal, apply)
 
-spm_freq = np.array([20, 25, 30, 40, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3500, 4000, 4500, 5000, 6000, 7000, 8000, 10000, 12000, 15000, 17000, 20000])
-spm_db = np.array([-4.5, -6.5, -7.5, -9, -9, -8, -8, -7, -6, -4.5, -3, -2, 0, 0, -0.5, -1.5, -4.5, -3, 1, 0, -6, -7, -5, -7, -14, -5, -6, -3, -4, 2])
+    def parse(self):
+        parser = ap.ArgumentParser(
+            prog="soundstage-stealer"
+        )
 
-spm_spline = make_interp_spline(spm_freq, spm_db)
+        parser.add_argument('-s', '--steal', help='Input Graphic EQ file from which you want to "steal" the soundstage',
+                            required=True)
+        parser.add_argument('-a', '--apply',
+                            help='Input Graphic EQ file to which you want to apply the "stolen" soundstage',
+                            required=True)
+        parser.add_argument('--peace', action='store_true', required=False, help="If you exported "
+                                                                                            "GraphicEQ from"
+                                                                                            "Peace"
+                                                                                            "add this option to the "
+                                                                                            "commandline")
 
-spm_freq_ = np.linspace(1, 22050, 22050)
-spm_db_ = spm_spline(spm_freq_)
+        return parser.parse_args()
 
-spm_matrix = np.array([spm_freq_, spm_db_])
+    def read_eq(self, file, apo):
+        freq = []
+        deci = []
 
-edit = spm_db_ + dt_db_
+        if apo:
+            eq_p = open(file, 'r', encoding='utf-8').readline()[10:].split(" ")
 
-matrix = [spm_freq_.tolist(), edit.tolist()]
+            for i in eq_p:
+                if "f" in i:
+                    freq.append(int(i.split('"')[1]))
+                elif 'v' in i:
+                    deci.append(float(i.split('"')[1]))
 
-default_freq = [20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000]
+        else:
+            eq = open(file, 'r', encoding='utf-8').readline()[11:].split("; ")
 
-dict_f = {}
+            for i in eq:
+                freq.append(int(i.split(' ')[0]))
+                deci.append(float(i.split(' ')[1]))
 
-for x, y in zip(matrix[0], matrix[1]):
-    if x in default_freq:
-        dict_f[x] = round(y, 1)
+        spline = make_interp_spline(np.array(freq), np.array(deci))
+        freq_ = np.linspace(1, 22050, 22050)
+        deci_ = spline(freq_)
+
+        return [freq_.tolist(), deci_.tolist()]
+
+    def create_eq(self, eq1, eq2):
+        total_deci = [(x * -1) + y for x, y in zip(eq1[1], eq2[1])]
+        final = {}
+
+        for freq, deci in zip(eq1[0], total_deci):
+            if round(freq) in self.eq:
+                final[round(freq)] = round(deci, 1)
+
+        # AutoEQ GraphicEQ file for Wavelet
+        file = open(os.path.join(os.getcwd(), "GraphicEQ.txt_AutoEQ"), 'w', encoding='utf-8')
+        file.write("GraphicEQ:")
+        for x, y in final.items():
+            if x == 20000:
+                file.write(f" {x} {y}")
+            else:
+                file.write(f" {x} {y};")
+        file.close()
+
+        # Peace GraphicEQ file
+        file = open(os.path.join(os.getcwd(), "GraphicEQ_Peace.txt"), 'w', encoding='utf-8')
+        file.write("GraphicEQ:")
+        f = 0
+        d = 0
+        for x in final.keys():
+            file.write(f'f{f}="{x}" ')
+            f += 1
+        file.write('FilterLength="8191" InterpolateLin="0" InterpolationMethod="B-spline" ')
+        for y in final.values():
+            file.write(f'v{d}="{y}"')
+            d += 1
+        file.close()
+
+
+if __name__ == '__main__':
+    Stealer()
